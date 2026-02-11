@@ -1,0 +1,9 @@
+# Requirements for PROFESSIONAL version (RECOMMENDED)
+# Install with: pip install -r requirements_professional.txt
+
+shapely>=2.0.0
+triangle>=20230923
+numpy-stl>=3.0.0
+opencv-python>=4.8.0
+scipy>=1.11.0
+numpy>=1.24.0
