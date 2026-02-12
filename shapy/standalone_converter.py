@@ -463,9 +463,9 @@ if __name__ == "__main__":
     converter.scale = 20.0
     
     # Run conversion
-    converter.process('/mnt/user-data/outputs/demo_3d.stl')
+    converter.process('/home/logicrays/Desktop/botpress/files/shapy/images/demo_3d.stl')
     
-    print("📁 Output saved to: /mnt/user-data/outputs/demo_3d.stl")
+    print("📁 Output saved to: /home/logicrays/Desktop/botpress/files/shapy/images/demo_3d.stl")
     print("🖼️  Debug images saved to: /home/claude/debug_*.png")
     print("\n💡 To use your own floor plan:")
     print("   1. Upload your PNG image")

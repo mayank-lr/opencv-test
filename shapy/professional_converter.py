@@ -75,60 +75,10 @@ class FloorPlanConverter:
         print(f"✓ Loaded: {self.width}x{self.height} pixels")
         print(f"✓ Physical size: {self.width*self.scale/1000:.2f}m x {self.height*self.scale/1000:.2f}m")
     
-    def _zhang_suen_thinning(self, img: np.ndarray) -> np.ndarray:
-        """
-        Zhang-Suen morphological thinning algorithm
-        Reduces thick walls to single-pixel centerlines
-        """
-        img = img.copy()
-        img[img > 0] = 1
-        
-        changing1 = changing2 = [(-1, -1)]
-        
-        while changing1 or changing2:
-            # Step 1
-            changing1 = []
-            rows, cols = img.shape
-            for i in range(1, rows - 1):
-                for j in range(1, cols - 1):
-                    P2, P3, P4, P5, P6, P7, P8, P9 = n = [
-                        img[i-1, j], img[i-1, j+1], img[i, j+1], img[i+1, j+1],
-                        img[i+1, j], img[i+1, j-1], img[i, j-1], img[i-1, j-1]
-                    ]
-                    if (img[i, j] == 1 and
-                        2 <= sum(n) <= 6 and
-                        sum([n[k] == 0 and n[k+1] == 1 for k in range(7)]) + (n[7] == 0 and n[0] == 1) == 1 and
-                        P2 * P4 * P6 == 0 and
-                        P4 * P6 * P8 == 0):
-                        changing1.append((i, j))
-            
-            for i, j in changing1:
-                img[i, j] = 0
-            
-            # Step 2
-            changing2 = []
-            for i in range(1, rows - 1):
-                for j in range(1, cols - 1):
-                    P2, P3, P4, P5, P6, P7, P8, P9 = n = [
-                        img[i-1, j], img[i-1, j+1], img[i, j+1], img[i+1, j+1],
-                        img[i+1, j], img[i+1, j-1], img[i, j-1], img[i-1, j-1]
-                    ]
-                    if (img[i, j] == 1 and
-                        2 <= sum(n) <= 6 and
-                        sum([n[k] == 0 and n[k+1] == 1 for k in range(7)]) + (n[7] == 0 and n[0] == 1) == 1 and
-                        P2 * P4 * P8 == 0 and
-                        P2 * P6 * P8 == 0):
-                        changing2.append((i, j))
-            
-            for i, j in changing2:
-                img[i, j] = 0
-        
-        return (img * 255).astype(np.uint8)
-    
     def preprocess(self):
         """
-        Preprocess image to extract wall centerlines
-        This is the KEY step that solves the double-line problem!
+        Preprocess image: binarize and clean up noise.
+        Uses contour-based extraction instead of skeletonization.
         """
         print("\n→ Step 1: Preprocessing image")
         
@@ -140,86 +90,141 @@ class FloorPlanConverter:
         binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
         binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
         
-        # Skeletonize to get CENTERLINES (solves double-line issue!)
-        print("  • Extracting wall centerlines...")
-        self.skeleton = self._zhang_suen_thinning(binary)
+        self.binary = binary
         
-        # Save debug images
-        cv2.imwrite('/home/claude/debug_01_binary.png', binary)
-        cv2.imwrite('/home/claude/debug_02_skeleton.png', self.skeleton)
+        # Save debug image
+        cv2.imwrite('/home/logicrays/Desktop/botpress/files/shapy/images/debug_01_binary.png', binary)
         
-        print("  ✓ Centerlines extracted")
-        return self.skeleton
+        print("  ✓ Binary image prepared")
+        return binary
     
-    def extract_wall_centerlines(self):
-        """
-        Use Hough Line Transform to detect wall centerline segments
-        """
-        print("\n→ Step 2: Detecting wall segments")
+    def _contour_to_coords(self, contour):
+        """Convert an OpenCV contour to a list of (x_mm, y_mm) coordinates."""
+        epsilon = 0.005 * cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, epsilon, True)
         
-        # Detect lines in skeleton
-        lines = cv2.HoughLinesP(
-            self.skeleton,
-            rho=1,
-            theta=np.pi/180,
-            threshold=20,
-            minLineLength=15,
-            maxLineGap=5
+        if len(approx) < 3:
+            return None
+        
+        coords = []
+        for pt in approx:
+            x, y = pt[0]
+            coords.append((x * self.scale, y * self.scale))
+        
+        # Close the ring
+        if coords[0] != coords[-1]:
+            coords.append(coords[0])
+        
+        return coords
+    
+    def extract_wall_contours(self):
+        """
+        Extract wall geometry directly from contours in the binary image.
+        Uses RETR_CCOMP hierarchy to build polygons WITH holes (rooms).
+        
+        RETR_CCOMP hierarchy format: [Next, Previous, First_Child, Parent]
+        - Outer contours have Parent == -1
+        - Inner contours (holes) have Parent >= 0
+        """
+        print("\n→ Step 2: Extracting wall contours")
+        
+        # Find contours with 2-level hierarchy
+        contours, hierarchy = cv2.findContours(
+            self.binary, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE
         )
         
-        if lines is None or len(lines) == 0:
+        if contours is None or len(contours) == 0:
             print("  ⚠ Warning: No walls detected!")
             return []
         
-        # Convert to Shapely LineStrings (in mm coordinates)
-        centerlines = []
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
-            # Convert pixels to mm
-            line_geom = LineString([
-                (x1 * self.scale, y1 * self.scale),
-                (x2 * self.scale, y2 * self.scale)
-            ])
-            centerlines.append(line_geom)
+        hierarchy = hierarchy[0]  # hierarchy shape is (1, N, 4), flatten to (N, 4)
+        print(f"  • Found {len(contours)} raw contours")
         
-        self.wall_centerlines = centerlines
-        print(f"  ✓ Detected {len(centerlines)} wall segments")
-        return centerlines
+        min_area_px = 100  # Minimum area in pixels to filter noise
+        wall_polys = []
+        
+        # Iterate over outer contours (parent == -1)
+        for i in range(len(contours)):
+            # [Next, Previous, First_Child, Parent]
+            if hierarchy[i][3] != -1:
+                # This is a child (hole) contour, skip — we handle it via parent
+                continue
+            
+            # This is an outer contour
+            if cv2.contourArea(contours[i]) < min_area_px:
+                continue
+            
+            exterior_coords = self._contour_to_coords(contours[i])
+            if exterior_coords is None:
+                continue
+            
+            # Collect all child (hole) contours for this parent
+            holes = []
+            child_idx = hierarchy[i][2]  # First_Child
+            while child_idx != -1:
+                if cv2.contourArea(contours[child_idx]) >= min_area_px:
+                    hole_coords = self._contour_to_coords(contours[child_idx])
+                    if hole_coords is not None:
+                        holes.append(hole_coords)
+                child_idx = hierarchy[child_idx][0]  # Next sibling
+            
+            try:
+                poly = Polygon(exterior_coords, holes=holes if holes else None)
+                if not poly.is_valid:
+                    poly = poly.buffer(0)
+                if poly.is_valid and not poly.is_empty and poly.area > 0:
+                    if isinstance(poly, MultiPolygon):
+                        for p in poly.geoms:
+                            wall_polys.append(p)
+                    else:
+                        wall_polys.append(poly)
+            except Exception as e:
+                print(f"  ⚠ Skipping contour {i}: {e}")
+                continue
+        
+        total_holes = sum(len(list(p.interiors)) for p in wall_polys)
+        print(f"  ✓ Extracted {len(wall_polys)} wall polygon(s) with {total_holes} hole(s)")
+        
+        # Save debug image showing detected contours
+        debug_img = cv2.cvtColor(self.binary, cv2.COLOR_GRAY2BGR)
+        for i, contour in enumerate(contours):
+            is_outer = hierarchy[i][3] == -1
+            color = (0, 255, 0) if is_outer else (255, 0, 0)  # Green=outer, Blue=holes
+            cv2.drawContours(debug_img, [contour], -1, color, 2)
+        cv2.imwrite('/home/logicrays/Desktop/botpress/files/shapy/images/debug_02_contours.png', debug_img)
+        
+        self._contour_polys = wall_polys
+        return wall_polys
     
     def create_wall_geometry(self):
         """
-        Create wall polygons by buffering centerlines
-        This is where Shapely shines - clean geometric operations!
+        Create unified wall polygons from extracted contours.
+        Uses Shapely union to merge overlapping wall contours into
+        a single wall region with interior holes (rooms).
         """
         print("\n→ Step 3: Creating wall geometry")
         
-        # Buffer each centerline to create wall thickness
-        wall_polys = []
-        for centerline in self.wall_centerlines:
-            # Buffer creates a polygon around the line
-            # cap_style=2 gives flat ends (better for walls)
-            wall = centerline.buffer(
-                self.wall_thickness / 2,
-                cap_style=2,  # Flat caps
-                join_style=2  # Mitered joins
-            )
-            wall_polys.append(wall)
+        if not self._contour_polys:
+            print("  ⚠ No contour polygons to process")
+            self.wall_polygons = []
+            return []
         
-        # Union all walls (merge overlapping parts)
-        # This is a MAJOR advantage of Shapely - handles complex unions cleanly!
-        if wall_polys:
-            print("  • Merging overlapping walls...")
-            merged = unary_union(wall_polys)
-            
-            # Handle both Polygon and MultiPolygon results
-            if isinstance(merged, Polygon):
-                self.wall_polygons = [merged]
-            elif isinstance(merged, MultiPolygon):
-                self.wall_polygons = list(merged.geoms)
-            else:
-                self.wall_polygons = []
+        # Union all contour polygons to get merged wall geometry
+        print("  • Merging wall contours...")
+        merged = unary_union(self._contour_polys)
         
-        print(f"  ✓ Created {len(self.wall_polygons)} wall region(s)")
+        # Handle both Polygon and MultiPolygon results
+        if isinstance(merged, Polygon):
+            self.wall_polygons = [merged]
+        elif isinstance(merged, MultiPolygon):
+            self.wall_polygons = list(merged.geoms)
+        else:
+            self.wall_polygons = []
+        
+        total_interiors = sum(
+            len(list(p.interiors)) for p in self.wall_polygons
+        )
+        print(f"  ✓ Created {len(self.wall_polygons)} wall region(s) with {total_interiors} interior hole(s)")
         return self.wall_polygons
     
     def detect_rooms_and_openings(self):
@@ -343,6 +348,7 @@ class FloorPlanConverter:
         meshes = []
         
         # Create wall meshes
+        print('➡ self.wall_polygons:', self.wall_polygons)
         print("  • Generating wall meshes...")
         for i, wall in enumerate(self.wall_polygons):
             wall_mesh = self.polygon_to_mesh(wall, self.wall_height, z_base=0)
@@ -354,45 +360,45 @@ class FloorPlanConverter:
         floor_box = box(0, 0, self.width * self.scale, self.height * self.scale)
         
         # Subtract walls from floor (creates proper floor inside rooms)
-        if self.wall_polygons:
-            try:
-                floor = floor_box.difference(unary_union(self.wall_polygons))
-                if isinstance(floor, Polygon):
-                    floor_mesh = self.polygon_to_mesh(
-                        floor, 
-                        self.floor_thickness,
-                        z_base=-self.floor_thickness
-                    )
-                    if floor_mesh:
-                        meshes.append(floor_mesh)
-                elif isinstance(floor, MultiPolygon):
-                    for poly in floor.geoms:
-                        floor_mesh = self.polygon_to_mesh(
-                            poly,
-                            self.floor_thickness,
-                            z_base=-self.floor_thickness
-                        )
-                        if floor_mesh:
-                            meshes.append(floor_mesh)
-            except:
-                # Fallback: full floor
-                floor_mesh = self.polygon_to_mesh(
-                    floor_box,
-                    self.floor_thickness,
-                    z_base=-self.floor_thickness
-                )
-                if floor_mesh:
-                    meshes.append(floor_mesh)
+        # if self.wall_polygons:
+        #     try:
+        #         floor = floor_box.difference(unary_union(self.wall_polygons))
+        #         if isinstance(floor, Polygon):
+        #             floor_mesh = self.polygon_to_mesh(
+        #                 floor, 
+        #                 self.floor_thickness,
+        #                 z_base=-self.floor_thickness
+        #             )
+        #             if floor_mesh:
+        #                 meshes.append(floor_mesh)
+        #         elif isinstance(floor, MultiPolygon):
+        #             for poly in floor.geoms:
+        #                 floor_mesh = self.polygon_to_mesh(
+        #                     poly,
+        #                     self.floor_thickness,
+        #                     z_base=-self.floor_thickness
+        #                 )
+        #                 if floor_mesh:
+        #                     meshes.append(floor_mesh)
+        #     except:
+        #         # Fallback: full floor
+        #         floor_mesh = self.polygon_to_mesh(
+        #             floor_box,
+        #             self.floor_thickness,
+        #             z_base=-self.floor_thickness
+        #         )
+        #         if floor_mesh:
+        #             meshes.append(floor_mesh)
         
         # Create ceiling mesh
         print("  • Generating ceiling...")
-        ceiling_mesh = self.polygon_to_mesh(
-            floor_box,
-            self.ceiling_thickness,
-            z_base=self.wall_height
-        )
-        if ceiling_mesh:
-            meshes.append(ceiling_mesh)
+        # ceiling_mesh = self.polygon_to_mesh(
+        #     floor_box,
+        #     self.ceiling_thickness,
+        #     z_base=self.wall_height
+        # )
+        # if ceiling_mesh:
+        #     meshes.append(ceiling_mesh)
         
         self.meshes = meshes
         
@@ -444,7 +450,7 @@ class FloorPlanConverter:
         print("="*70)
         
         self.preprocess()
-        self.extract_wall_centerlines()
+        self.extract_wall_contours()
         self.create_wall_geometry()
         self.detect_rooms_and_openings()
         self.build_3d_model()
@@ -454,7 +460,7 @@ class FloorPlanConverter:
         print("✅ CONVERSION COMPLETE!")
         print("="*70)
         print(f"\n📁 Output: {output_path}")
-        print(f"🔍 Debug images: /home/claude/debug_*.png\n")
+        print(f"🔍 Debug images: /home/logicrays/Desktop/botpress/files/shapy/images/debug_*.png\n")
 
 
 # =============================================================================
@@ -465,24 +471,24 @@ if __name__ == "__main__":
     # Create a test floor plan
     print("Creating test floor plan...")
     
-    img = np.ones((500, 700), dtype=np.uint8) * 255
+    # img = np.ones((500, 700), dtype=np.uint8) * 255
     
-    # Draw walls
-    thickness = 12
-    cv2.rectangle(img, (50, 50), (650, 450), 0, thickness)  # Exterior
-    cv2.line(img, (350, 50), (350, 450), 0, thickness)      # Vertical wall
-    cv2.line(img, (50, 250), (650, 250), 0, thickness)      # Horizontal wall
+    # # Draw walls
+    # thickness = 12
+    # cv2.rectangle(img, (50, 50), (650, 450), 0, thickness)  # Exterior
+    # cv2.line(img, (350, 50), (350, 450), 0, thickness)      # Vertical wall
+    # cv2.line(img, (50, 250), (650, 250), 0, thickness)      # Horizontal wall
     
-    # Doors (gaps in walls)
-    cv2.rectangle(img, (345, 240), (355, 260), 255, -1)
-    cv2.rectangle(img, (170, 245), (210, 255), 255, -1)
+    # # Doors (gaps in walls)
+    # cv2.rectangle(img, (345, 240), (355, 260), 255, -1)
+    # cv2.rectangle(img, (170, 245), (210, 255), 255, -1)
     
-    # Windows
-    cv2.rectangle(img, (280, 45), (320, 55), 255, -1)
-    cv2.rectangle(img, (480, 45), (520, 55), 255, -1)
+    # # Windows
+    # cv2.rectangle(img, (280, 45), (320, 55), 255, -1)
+    # cv2.rectangle(img, (480, 45), (520, 55), 255, -1)
     
-    test_path = '/home/claude/test_floorplan.png'
-    cv2.imwrite(test_path, img)
+    test_path = '/home/logicrays/Desktop/botpress/files/12feb-blk.png'
+    # cv2.imwrite(test_path, img)
     print(f"✓ Created: {test_path}\n")
     
     # Convert to 3D
@@ -496,4 +502,4 @@ if __name__ == "__main__":
     
     converter.scale = 15.0  # 1 pixel = 15mm
     
-    converter.process('/mnt/user-data/outputs/professional_3d.stl')
+    converter.process('/home/logicrays/Desktop/botpress/files/shapy/images/professional_3d.stl')

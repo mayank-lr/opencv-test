@@ -16,15 +16,15 @@ from standalone_converter import FloorPlan3D
 # ============================================================================
 
 # Path to your floor plan image
-INPUT_IMAGE = '/home/logicrays/Desktop/botpress/files/shapy/mmn.png'
+INPUT_IMAGE = '/home/logicrays/Desktop/botpress/files/12feb-blk.png'
 
 # Output STL file
-OUTPUT_STL = '/home/logicrays/Desktop/botpress/files/shapy/mmn_3d.stl'
+OUTPUT_STL = '/home/logicrays/Desktop/botpress/files/shapy/12febn3d.stl'
 
 # Wall dimensions (in millimeters)
-WALL_HEIGHT = 3000        # 3 meters = typical ceiling height
-WALL_THICKNESS = 200      # 20 cm = typical wall thickness
-FLOOR_THICKNESS = 200     # 20 cm floor slab
+WALL_HEIGHT = 2200        # 3 meters = typical ceiling height
+WALL_THICKNESS = 150      # 20 cm = typical wall thickness
+FLOOR_THICKNESS = 150     # 20 cm floor slab
 
 # SCALE (pixels to mm) - IMPORTANT!
 # How to calculate:

@@ -31,8 +31,8 @@ def create_test_plan():
     # Windows
     cv2.rectangle(img, (380, 45), (420, 55), 255, -1)
     
-    cv2.imwrite('/home/claude/comparison_test.png', img)
-    return '/home/claude/comparison_test.png'
+    cv2.imwrite('/home/logicrays/Desktop/botpress/files/shapy/images/comparison_test.png', img)
+    return '/home/logicrays/Desktop/botpress/files/12feb-blk.png'
 
 
 def run_comparison():
