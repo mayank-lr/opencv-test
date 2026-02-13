@@ -1,27 +1,18 @@
 """
-Floor Plan to 3D STL Converter - BEST APPROACH
-Using: Shapely + Triangle + numpy-stl
+Floor Plan to 3D STL Converter - CORRECTED VERSION
+Using: Shapely + trimesh + opencv
 
-This is the RECOMMENDED approach because:
-✓ Professional geometry handling (Shapely)
-✓ Proper wall centerline offsetting (buffer operations)
-✓ Clean boolean operations (union, difference)
-✓ High-quality triangulation (Triangle)
-✓ Industry-standard STL export (numpy-stl)
-✓ No double-line issues
-
-Installation:
-    pip install shapely triangle numpy-stl opencv-python
+Key Fix: Proper polygon extrusion using trimesh.creation.extrude_polygon()
 """
 
 import cv2
 import numpy as np
 from shapely.geometry import LineString, Polygon, MultiPolygon, Point, box
 from shapely.ops import unary_union, polygonize
-import triangle as tr
-from stl import mesh
+import trimesh
 from typing import List, Tuple, Optional
 import warnings
+
 warnings.filterwarnings('ignore')
 
 
@@ -70,7 +61,7 @@ class FloorPlanConverter:
         self.opening_polygons: List[Polygon] = []
         
         # Final meshes
-        self.meshes: List[mesh.Mesh] = []
+        self.meshes: List[trimesh.Trimesh] = []
         
         print(f"✓ Loaded: {self.width}x{self.height} pixels")
         print(f"✓ Physical size: {self.width*self.scale/1000:.2f}m x {self.height*self.scale/1000:.2f}m")
@@ -93,7 +84,10 @@ class FloorPlanConverter:
         self.binary = binary
         
         # Save debug image
-        cv2.imwrite('/home/logicrays/Desktop/botpress/files/shapy/images/debug_01_binary.png', binary)
+        debug_dir = '/home/logicrays/Desktop/botpress/files/shapy/images'
+        import os
+        os.makedirs(debug_dir, exist_ok=True)
+        cv2.imwrite(f'{debug_dir}/debug_01_binary.png', binary)
         
         print("  ✓ Binary image prepared")
         return binary
@@ -191,7 +185,9 @@ class FloorPlanConverter:
             is_outer = hierarchy[i][3] == -1
             color = (0, 255, 0) if is_outer else (255, 0, 0)  # Green=outer, Blue=holes
             cv2.drawContours(debug_img, [contour], -1, color, 2)
-        cv2.imwrite('/home/logicrays/Desktop/botpress/files/shapy/images/debug_02_contours.png', debug_img)
+        
+        debug_dir = '/home/logicrays/Desktop/botpress/files/shapy/images'
+        cv2.imwrite(f'{debug_dir}/debug_02_contours.png', debug_img)
         
         self._contour_polys = wall_polys
         return wall_polys
@@ -224,7 +220,7 @@ class FloorPlanConverter:
         total_interiors = sum(
             len(list(p.interiors)) for p in self.wall_polygons
         )
-        print(f"wall g  ✓ Created {len(self.wall_polygons)} wall region(s) with {total_interiors} interior hole(s)")
+        print(f"  ✓ Created {len(self.wall_polygons)} wall region(s) with {total_interiors} interior hole(s)")
         return self.wall_polygons
     
     def detect_rooms_and_openings(self):
@@ -253,169 +249,100 @@ class FloorPlanConverter:
         print(f"  ✓ Found {len(rooms)} room(s), {len(openings)} opening(s)")
         return rooms, openings
     
-    def polygon_to_mesh(self, polygon: Polygon, height: float, z_base: float = 0) -> Optional[mesh.Mesh]:
+    def polygon_to_mesh_trimesh(self, polygon: Polygon, height: float, z_base: float = 0):
         """
-        Convert 2D Shapely polygon to 3D mesh using Triangle library
-        This gives us high-quality triangulation!
+        Convert Shapely polygon to trimesh using proper extrusion.
+        Handles both simple polygons and polygons with holes.
         
         Args:
             polygon: Shapely polygon to extrude
             height: Extrusion height in mm
-            z_base: Base Z coordinate
+            z_base: Base Z coordinate in mm
             
         Returns:
-            numpy-stl Mesh object
+            trimesh.Trimesh object or None
         """
-        if not isinstance(polygon, Polygon) or polygon.is_empty:
+        if polygon is None or polygon.is_empty or not polygon.is_valid:
             return None
         
-        # Get exterior coordinates
-        coords = np.array(polygon.exterior.coords[:-1])
-        
-        if len(coords) < 3:
-            return None
-        
-        # Prepare for Triangle library
-        segments = [[i, (i + 1) % len(coords)] for i in range(len(coords))]
-        
-        tri_input = {
-            'vertices': coords,
-            'segments': segments
-        }
-        print('➡ tri_input:', tri_input)
-        
-        # Triangulate using Triangle library
-        # 'p' = planar straight line graph
-        # 'q' = quality mesh (min angle 20 degrees)
-        # 'a' = maximum triangle area
         try:
-            # tri_output = tr.triangulate(tri_input, 'pq20a' + str(polygon.area / 4 ))
-            tri_output = tr.triangulate(tri_input, 'pa' + str(polygon.area / 5))
-            triangles_2d = tri_output['triangles']
-            vertices_2d = tri_output['vertices']
-        except:
-            # Fallback to simple triangulation
-            from scipy.spatial import Delaunay
-            tri = Delaunay(coords)
-            triangles_2d = tri.simplices
-            vertices_2d = coords
-        
-        n_verts = len(vertices_2d)
-        
-        # Create 3D vertices
-        vertices_bottom = np.column_stack([
-            vertices_2d[:, 0],
-            vertices_2d[:, 1],
-            np.full(n_verts, z_base)
-        ])
-        
-        vertices_top = np.column_stack([
-            vertices_2d[:, 0],
-            vertices_2d[:, 1],
-            np.full(n_verts, z_base + height)
-        ])
-        print('➡ vertices_top:', vertices_top)
-        
-        all_vertices = np.vstack([vertices_bottom, vertices_top])
-        
-        # Create faces
-        faces_bottom = triangles_2d[:, ::-1]  # Reverse for correct normals
-        faces_top = triangles_2d + n_verts
-        
-        # Side faces (quad = 2 triangles per edge)
-        n_coords = len(coords)
-        faces_sides = []
-        for i in range(n_coords):
-            next_i = (i + 1) % n_coords
-            faces_sides.append([i, next_i, n_verts + i])
-            faces_sides.append([next_i, n_verts + next_i, n_verts + i])
-        
-        all_faces = np.vstack([faces_bottom, faces_top, faces_sides])
-        
-        # Create numpy-stl mesh
-        num_faces = len(all_faces)
-        stl_mesh = mesh.Mesh(np.zeros(num_faces, dtype=mesh.Mesh.dtype))
-        
-        for i, face in enumerate(all_faces):
-            for j in range(3):
-                stl_mesh.vectors[i][j] = all_vertices[face[j]]
-        
-        return stl_mesh
+            # Method 1: Use trimesh.creation.extrude_polygon
+            # This properly handles Shapely polygons with holes
+            mesh_3d = trimesh.creation.extrude_polygon(
+                polygon=polygon,
+                height=height
+            )
+            
+            # Move to the correct Z height
+            if z_base != 0:
+                mesh_3d.apply_translation([0, 0, z_base])
+            
+            return mesh_3d
+            
+        except Exception as e:
+            print(f"  ⚠ Warning: Failed to extrude polygon: {e}")
+            print(f"    Polygon area: {polygon.area:.0f} mm², # holes: {len(list(polygon.interiors))}")
+            
+            # Fallback: Try without holes if the polygon has them
+            if len(list(polygon.interiors)) > 0:
+                try:
+                    print(f"    → Attempting fallback: extrude without holes...")
+                    simple_polygon = Polygon(polygon.exterior.coords)
+                    mesh_3d = trimesh.creation.extrude_polygon(
+                        polygon=simple_polygon,
+                        height=height
+                    )
+                    if z_base != 0:
+                        mesh_3d.apply_translation([0, 0, z_base])
+                    print(f"    ✓ Succeeded with simplified polygon (holes ignored)")
+                    return mesh_3d
+                except Exception as e2:
+                    print(f"    ✗ Fallback also failed: {e2}")
+                    return None
+            else:
+                return None
     
     def build_3d_model(self):
         """
-        Build complete 3D model from all geometry
+        Build the complete 3D model from wall polygons and floor.
         """
         print("\n→ Step 5: Building 3D model")
-        
         meshes = []
         
         # Create wall meshes
-        print('➡ self.wall_polygons:', self.wall_polygons)
-        print("  • Generating wall meshes...")
-        for i, wall in enumerate(self.wall_polygons):
-            wall_mesh = self.polygon_to_mesh(wall, self.wall_height, z_base=0)
+        print(f"  • Generating {len(self.wall_polygons)} wall mesh(es)...")
+        for idx, wall in enumerate(self.wall_polygons):
+            print(f"    - Wall {idx+1}/{len(self.wall_polygons)}: area={wall.area:.0f} mm², holes={len(list(wall.interiors))}")
+            wall_mesh = self.polygon_to_mesh_trimesh(wall, self.wall_height, z_base=0)
             if wall_mesh is not None:
                 meshes.append(wall_mesh)
+                print(f"      ✓ Generated: {len(wall_mesh.faces)} faces")
+            else:
+                print(f"      ✗ Failed to generate mesh")
         
         # Create floor mesh
         print("  • Generating floor...")
-        floor_box = box(0, 0, self.width * self.scale, self.height * self.scale)
-        
-        # Subtract walls from floor (creates proper floor inside rooms)
-        # if self.wall_polygons:
-        #     try:
-        #         floor = floor_box.difference(unary_union(self.wall_polygons))
-        #         if isinstance(floor, Polygon):
-        #             floor_mesh = self.polygon_to_mesh(
-        #                 floor, 
-        #                 self.floor_thickness,
-        #                 z_base=-self.floor_thickness
-        #             )
-        #             if floor_mesh:
-        #                 meshes.append(floor_mesh)
-        #         elif isinstance(floor, MultiPolygon):
-        #             for poly in floor.geoms:
-        #                 floor_mesh = self.polygon_to_mesh(
-        #                     poly,
-        #                     self.floor_thickness,
-        #                     z_base=-self.floor_thickness
-        #                 )
-        #                 if floor_mesh:
-        #                     meshes.append(floor_mesh)
-        #     except:
-        #         # Fallback: full floor
-        #         floor_mesh = self.polygon_to_mesh(
-        #             floor_box,
-        #             self.floor_thickness,
-        #             z_base=-self.floor_thickness
-        #         )
-        #         if floor_mesh:
-        #             meshes.append(floor_mesh)
-        
-        # Create ceiling mesh
-        print("  • Generating ceiling...")
-        # ceiling_mesh = self.polygon_to_mesh(
-        #     floor_box,
-        #     self.ceiling_thickness,
-        #     z_base=self.wall_height
-        # )
-        # if ceiling_mesh:
-        #     meshes.append(ceiling_mesh)
+        floor_poly = box(0, 0, self.width * self.scale, self.height * self.scale)
+        floor_mesh = self.polygon_to_mesh_trimesh(
+            floor_poly, 
+            height=self.floor_thickness, 
+            z_base=-self.floor_thickness
+        )
+        if floor_mesh:
+            meshes.append(floor_mesh)
+            print(f"    ✓ Floor generated: {len(floor_mesh.faces)} faces")
         
         self.meshes = meshes
         
-        total_verts = sum(len(m.vectors) * 3 for m in meshes)
-        total_faces = sum(len(m.vectors) for m in meshes)
-        
+        total_faces = sum(len(m.faces) for m in meshes)
         print(f"  ✓ Created {len(meshes)} mesh(es)")
-        print(f"  ✓ Total: {total_faces:,} faces, {total_verts:,} vertices")
+        print(f"  ✓ Total: {total_faces:,} faces")
         
         return meshes
     
     def export_stl(self, output_path: str):
         """
-        Export combined mesh to STL file
+        Export the combined mesh to STL file.
         """
         print(f"\n→ Step 6: Exporting to STL")
         
@@ -423,33 +350,20 @@ class FloorPlanConverter:
             print("  ⚠ Error: No meshes to export!")
             return False
         
-        # Combine all meshes
+        # Use trimesh to combine all individual meshes into one
         print("  • Combining meshes...")
-        combined = mesh.Mesh(np.concatenate([m.data for m in self.meshes]))
-        # total_faces = sum(len(m.data) for m in self.meshes)
-        # combined = mesh.Mesh(np.zeros(total_faces, dtype=mesh.Mesh.dtype))
-
-        # # Copy each mesh's data into combined mesh
-        # offset = 0
-        # for m in self.meshes:
-        #     n_faces = len(m.data)
-        #     combined.data[offset:offset + n_faces] = m.data.copy()
-        #     offset += n_faces
-
+        combined = trimesh.util.concatenate(self.meshes)
+     
         # Save to file
         print(f"  • Writing to {output_path}...")
-        combined.save(output_path)
-        
-        # Calculate statistics
-        volume = combined.get_mass_properties()[0]
+        combined.export(output_path)
         
         print(f"\n  ✓ Export successful!")
-        print(f"\n📊 Model Statistics:")
-        print(f"   • Faces: {len(combined.vectors):,}")
-        print(f"   • Vertices: {len(combined.vectors) * 3:,}")
-        print(f"   • Volume: {volume:,.0f} mm³ ({volume/1e9:.4f} m³)")
-        print(f"   • Bounding box: {combined.x.min():.1f} to {combined.x.max():.1f} mm")
-        print(f"   • Is closed: {combined.is_closed()}")
+        print(f"📊 Model Statistics:")
+        print(f"   • Faces: {len(combined.faces):,}")
+        print(f"   • Vertices: {len(combined.vertices):,}")
+        print(f"   • Is Watertight: {combined.is_watertight}")
+        print(f"   • Bounds: {combined.bounds}")
         
         return True
     
@@ -458,7 +372,7 @@ class FloorPlanConverter:
         Complete processing pipeline
         """
         print("\n" + "="*70)
-        print("🏗️  FLOOR PLAN → 3D STL CONVERTER (PROFESSIONAL)")
+        print("🏗️  FLOOR PLAN → 3D STL CONVERTER (CORRECTED)")
         print("="*70)
         
         self.preprocess()
@@ -480,38 +394,18 @@ class FloorPlanConverter:
 # =============================================================================
 
 if __name__ == "__main__":
-    # Create a test floor plan
-    print("Creating test floor plan...")
-    
-    # img = np.ones((500, 700), dtype=np.uint8) * 255
-    
-    # # Draw walls
-    # thickness = 12
-    # cv2.rectangle(img, (50, 50), (650, 450), 0, thickness)  # Exterior
-    # cv2.line(img, (350, 50), (350, 450), 0, thickness)      # Vertical wall
-    # cv2.line(img, (50, 250), (650, 250), 0, thickness)      # Horizontal wall
-    
-    # # Doors (gaps in walls)
-    # cv2.rectangle(img, (345, 240), (355, 260), 255, -1)
-    # cv2.rectangle(img, (170, 245), (210, 255), 255, -1)
-    
-    # # Windows
-    # cv2.rectangle(img, (280, 45), (320, 55), 255, -1)
-    # cv2.rectangle(img, (480, 45), (520, 55), 255, -1)
-    
+    # Convert your floor plan to 3D
     test_path = '/home/logicrays/Desktop/botpress/files/shapy/images/Untitled design.png'
-    # cv2.imwrite(test_path, img)
-    print(f"✓ Created: {test_path}\n")
     
-    # Convert to 3D
     converter = FloorPlanConverter(
         image_path=test_path,
-        wall_height=3000,
-        wall_thickness=120,
-        floor_thickness=200,
-        ceiling_thickness=150
+        wall_height=3000,      # 3 meters tall walls
+        wall_thickness=120,    # 12cm thick walls
+        floor_thickness=200,   # 20cm thick floor
+        ceiling_thickness=150  # 15cm thick ceiling
     )
     
-    converter.scale = 15.0  # 1 pixel = 15mm
+    converter.scale = 15.0  # 1 pixel = 15mm (adjust based on your floor plan)
     
-    converter.process('/home/logicrays/Desktop/botpress/files/shapy/images/clean.stl')
+    output_path = '/home/logicrays/Desktop/botpress/files/shapy/images/clean.stl'
+    converter.process(output_path)
