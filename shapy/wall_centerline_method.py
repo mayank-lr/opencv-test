@@ -23,6 +23,84 @@ from skimage.morphology import skeletonize
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon as MplPolygon
 from matplotlib.collections import PatchCollection
+from collections import Counter
+
+def merge_lines_with_local_mode(contour, min_segment_length=3, tolerance=2, y_jump_threshold=25):
+    """
+    Merge small line segments using LOCAL mode calculation per segment.
+    
+    NEW FIX: Detects large y-jumps as separate line boundaries.
+    Even if x is within tolerance, a large y gap = new segment.
+    
+    Parameters:
+    -----------
+    contour : numpy.ndarray         Shape (n, 1, 2)
+    min_segment_length : int        Min points to trigger a merge
+    tolerance : int                 x must be within mode ± tolerance
+    y_jump_threshold : int          y difference that signals a NEW line (default=20)
+    """
+    if len(contour) == 0:
+        return contour
+
+    points = contour.reshape(-1, 2)
+
+    if len(points) <= 2:
+        return contour
+
+    merged_points = []
+    i = 0
+
+    while i < len(points):
+        segment_start = i
+        current_x_values = [points[i, 0]]
+        j = i + 1
+
+        while j < len(points):
+            x_coord = points[j, 0]
+            y_coord = points[j, 1]
+            prev_y  = points[j - 1, 1]
+
+            #── NEW: large y-jump = separate line, stop segment here ──
+            if abs(y_coord - prev_y) > y_jump_threshold:
+                # print(y_coord,'➡ y_coord:', prev_y )
+                break
+
+            if len(current_x_values) >= min_segment_length:
+                counter    = Counter(current_x_values)
+                local_mode = counter.most_common(1)[0][0]
+
+                if abs(x_coord - local_mode) <= tolerance:
+                    current_x_values.append(x_coord)
+                    j += 1
+                else:
+                    break
+            else:
+                if abs(x_coord - current_x_values[-1]) <= tolerance * 2:
+                    current_x_values.append(x_coord)
+                    j += 1
+                else:
+                    break
+
+        segment_end    = j
+        segment_length = segment_end - segment_start
+
+        if segment_length >= min_segment_length:
+            counter = Counter(current_x_values)
+            mode_x  = counter.most_common(1)[0][0]
+
+            first_y = points[segment_start, 1]
+            last_y  = points[segment_end - 1, 1]
+
+            merged_points.append([mode_x, first_y])
+            if first_y != last_y:
+                merged_points.append([mode_x, last_y])
+        else:
+            for k in range(segment_start, segment_end):
+                merged_points.append(points[k])
+
+        i = segment_end
+
+    return np.array(merged_points).reshape(-1, 1, 2)
 
 
 class WallCenterlineConverter:
@@ -93,14 +171,39 @@ class WallCenterlineConverter:
         
         # Find contours of skeleton
         contours, _ = cv2.findContours(skeleton_uint8, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        print('➡ contours type:', type(contours))
+        centerlines = [cnt.astype(np.float32).tolist() for cnt in contours]
         data = {
-            "contours": [cnt.tolist() for cnt in contours]
+            "contours": centerlines
         }
+
         with open("contour_data.json", "w") as f:
             json.dump(data, f)
-        
-        print(f"  • Found {len(contours)} skeleton segments")
+
+
+        # Process contours
+        contours_list = list(contours)
+        n_data = []
+
+        for cont in contours_list:
+            cont = np.array(cont, dtype=np.int32)
+
+            result = merge_lines_with_local_mode(
+                cont,
+                min_segment_length=3,
+                tolerance=2,
+                y_jump_threshold=15
+            )
+
+            n_data.append(result.reshape(-1, 2))
+
+
+        # Convert back to original OpenCV format
+        centerlines = tuple(
+            np.array([[[x, y]] for (x, y) in contour], dtype=np.int32)
+            for contour in n_data
+        )
+
+        print(f"  • Found* {len(contours)} skeleton segments")
         
         # Convert contours to LineStrings
         centerlines = []
@@ -122,7 +225,7 @@ class WallCenterlineConverter:
                 except:
                     continue
 
-        print('➡ centerlines type:', type(centerlines))
+        print('➡ centerlines typee:', centerlines)
         data = {
             "contours": [list(line.coords) for line in centerlines]
         }
@@ -131,6 +234,8 @@ class WallCenterlineConverter:
         
 
 
+        centerlines = n_data  
+        # print('yessss',len(centerlines[7]))
         # Merge connected lines
         if centerlines:
             merged = linemerge(centerlines)
@@ -355,10 +460,10 @@ class WallCenterlineConverter:
 
 if __name__ == "__main__":
     converter = WallCenterlineConverter(
-        image_path='/home/logicrays/Desktop/botpress/files/shapy/images/Untitled design.png',
-        wall_height=1500,
-        wall_thickness=100,  # 20cm thick walls
+        image_path='/home/logicrays/Desktop/botpress/files/shapy/images/17feb.png',
+        wall_height=150,
+        wall_thickness=9,  # 20cm thick walls
         scale=15.0
     )
     
-    converter.process('output_centerline_walls.stl')
+    converter.process('/home/logicrays/Desktop/botpress/files/shapy/images/output_17-v2_walls.stl')
