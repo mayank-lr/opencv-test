@@ -458,12 +458,24 @@ class WallCenterlineConverter:
 # USAGE EXAMPLE
 # =============================================================================
 
+# if __name__ == "__main__":
+#     converter = WallCenterlineConverter(
+#         image_path='/home/logicrays/Desktop/botpress/files/shapy/images/17feb.png',
+#         wall_height=150,
+#         wall_thickness=9,  # 20cm thick walls
+#         scale=15.0
+#     )
+    
+#     converter.process('/home/logicrays/Desktop/botpress/files/shapy/images/ooutput_17-v2_walls.stl')
+
 if __name__ == "__main__":
     converter = WallCenterlineConverter(
-        image_path='/home/logicrays/Desktop/botpress/files/shapy/images/17feb.png',
+        image_path='/home/logicrays/Desktop/botpress/files/shapy/images/new_aa.png',
         wall_height=150,
         wall_thickness=9,  # 20cm thick walls
-        scale=15.0
+        scale=0.05
     )
     
-    converter.process('/home/logicrays/Desktop/botpress/files/shapy/images/output_17-v2_walls.stl')
+    converter.process('/home/logicrays/Desktop/botpress/files/shapy/images/aa.stl')
+
+

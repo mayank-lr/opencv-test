@@ -1,7 +1,8 @@
 import pyvista as pv
 
 # Load the STL file
-mesh = pv.read('/home/logicrays/Desktop/botpress/files/shapy/images/output_17-v2_walls.stl')
+mesh = pv.read('/home/logicrays/Desktop/botpress/files/shapy/images/aa.stl')
+ #/files/shapy/images/output_17-v2_walls.stl')
 
 # # Create a plotter and add the mesh
 # plotter = pv.Plotter()

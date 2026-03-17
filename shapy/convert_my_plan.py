@@ -16,7 +16,7 @@ from standalone_converter import FloorPlan3D
 # ============================================================================
 
 # Path to your floor plan image
-INPUT_IMAGE = '/home/logicrays/Desktop/botpress/files/12feb-blk.png'
+INPUT_IMAGE = '/home/logicrays/Desktop/botpress/files/images/12feb-blk.png'
 
 # Output STL file
 OUTPUT_STL = '/home/logicrays/Desktop/botpress/files/shapy/12febn3d.stl'
