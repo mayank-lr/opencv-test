@@ -1,0 +1,37 @@
+{
+  "total_points": 6,
+  "area_pixels_sq": 636507,
+  "slab_area_sq_ft": 254.6,
+  "outer_boundary_coordinates_px": [
+    {
+      "point": "P1",
+      "x": 47,
+      "y": 24
+    },
+    {
+      "point": "P2",
+      "x": 47,
+      "y": 624
+    },
+    {
+      "point": "P3",
+      "x": 1133,
+      "y": 623
+    },
+    {
+      "point": "P4",
+      "x": 1133,
+      "y": 290
+    },
+    {
+      "point": "P5",
+      "x": 1076,
+      "y": 288
+    },
+    {
+      "point": "P6",
+      "x": 1077,
+      "y": 24
+    }
+  ]
+}
