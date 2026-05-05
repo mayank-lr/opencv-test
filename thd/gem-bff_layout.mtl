@@ -1,0 +1,58 @@
+# Material file — house_plan_generator.py
+
+newmtl wall
+Kd 0.7500 0.7200 0.6500
+Ka 0.1500 0.1440 0.1300
+Ks 0.1000 0.1000 0.1000
+Ns 10.0
+d 1.0
+illum 2
+
+newmtl window_wall
+Kd 0.7500 0.7200 0.6500
+Ka 0.1500 0.1440 0.1300
+Ks 0.1000 0.1000 0.1000
+Ns 10.0
+d 1.0
+illum 2
+
+newmtl window_glass
+Kd 0.6000 0.8500 0.9500
+Ka 0.1200 0.1700 0.1900
+Ks 0.1000 0.1000 0.1000
+Ns 10.0
+d 0.55
+illum 4
+
+newmtl window_frame
+Kd 0.9500 0.9500 0.9200
+Ka 0.1900 0.1900 0.1840
+Ks 0.1000 0.1000 0.1000
+Ns 10.0
+d 1.0
+illum 2
+
+newmtl door_panel
+Kd 0.6000 0.3800 0.2000
+Ka 0.1200 0.0760 0.0400
+Ks 0.1000 0.1000 0.1000
+Ns 10.0
+d 1.0
+illum 2
+
+newmtl door_frame
+Kd 0.4000 0.2500 0.1200
+Ka 0.0800 0.0500 0.0240
+Ks 0.1000 0.1000 0.1000
+Ns 10.0
+d 1.0
+illum 2
+
+newmtl door_wall
+Kd 0.7500 0.7200 0.6500
+Ka 0.1500 0.1440 0.1300
+Ks 0.1000 0.1000 0.1000
+Ns 10.0
+d 1.0
+illum 2
+

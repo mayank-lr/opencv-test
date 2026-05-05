@@ -599,7 +599,7 @@ import numpy as np
 # ============================================================
 #  PATH TO YOUR DETECTION JSON
 # ============================================================
-file_path = "/home/logicrays/Desktop/botpress/files/shapy/images/gemb-cutout01_corrected.json"
+file_path = "/home/logicrays/Desktop/botpress/files/temp/furni_predictions_cutoutf2_corrected.json"
 
 # ============================================================
 #  WINDOW HEIGHT CONFIGURATION  (feet)
@@ -651,8 +651,8 @@ FEET_TO_UNITS = 12
 MIRROR_ON     = True
 MIN_THICKNESS = 2.0
 
-OUTPUT_OBJ = "gem-bff_layout.obj"
-OUTPUT_MTL = "gem-bff_layout.mtl"
+OUTPUT_OBJ = "tt_layout.obj"
+OUTPUT_MTL = "tt_layout.mtl"
 
 # ============================================================
 #  Helpers
